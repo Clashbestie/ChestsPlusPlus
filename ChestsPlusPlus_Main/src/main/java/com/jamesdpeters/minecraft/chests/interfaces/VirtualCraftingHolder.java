@@ -17,13 +17,8 @@ import org.bukkit.block.Container;
 import org.bukkit.block.Hopper;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryType;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.InventoryHolder;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.Recipe;
-import org.bukkit.inventory.RecipeChoice;
-import org.bukkit.inventory.ShapedRecipe;
-import org.bukkit.inventory.ShapelessRecipe;
+import org.bukkit.event.inventory.PrepareItemCraftEvent;
+import org.bukkit.inventory.*;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -31,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class VirtualCraftingHolder implements InventoryHolder {
 
@@ -261,7 +257,7 @@ public class VirtualCraftingHolder implements InventoryHolder {
             Utils.addIfNotNull(inventories, getInventory(block.getRelative(BlockFace.SOUTH)));
             Utils.addIfNotNull(inventories, getInventory(block.getRelative(BlockFace.WEST)));
 
-            boolean didCraft = craftItem(inventories, output);
+            boolean didCraft = craftItem(inventories, output, getInventory());
 
             //Play sound if crafting occured.
             if (didCraft) {
@@ -387,12 +383,15 @@ public class VirtualCraftingHolder implements InventoryHolder {
         return null;
     }
 
-    private boolean craftItem(List<Inventory> inputs, Inventory output) {
+    private boolean craftItem(List<Inventory> inputs, Inventory output, Inventory craftingInventory) {
         boolean sameInv = false;
         Inventory sameInventory = null;
 
         // Create a copy of the real inventories and decide if any of the inputs match the output.
         List<Inventory> tempInvs = new ArrayList<>();
+
+        // Remove duplicate inventories from list.
+        inputs = inputs.stream().distinct().collect(Collectors.toList());
 
         for (Inventory inv : inputs) {
             Inventory tempInv = Utils.copyInventory(inv);
@@ -410,10 +409,18 @@ public class VirtualCraftingHolder implements InventoryHolder {
         // Use NMS to get the real result considering meta data etc.
         ItemStack realResult = Crafting.craft(recipe);
 
+        Recipe recipeActual = Crafting.getRecipe(recipe);
+        CraftingInventoryImpl craftingInventoryImpl = new CraftingInventoryImpl(craftingInventory, realResult, recipe, recipeActual);
+        InventoryViewImpl inventoryView = new InventoryViewImpl(craftingInventory, output, ApiSpecific.getNmsProvider().getNPCProvider().createHumanEntity());
+        PrepareItemCraftEvent itemCraftEvent = new PrepareItemCraftEvent(craftingInventoryImpl, inventoryView, false);
+        Bukkit.getPluginManager().callEvent(itemCraftEvent);
+
+        if (craftingInventoryImpl.result == null) return false;
+
         //If we reach here there are enough materials so check for space in the Hopper and update inventory.
         //Check if output and input are the same inventory to avoid duplication.
         Inventory tempOutput = sameInv ? sameInventory : Utils.copyInventory(output);
-        HashMap<Integer, ItemStack> map = tempOutput.addItem(realResult);
+        HashMap<Integer, ItemStack> map = tempOutput.addItem(craftingInventoryImpl.result);
 
         //If result fits into output copy over the temporary inventories.
         if (map.isEmpty()) {
